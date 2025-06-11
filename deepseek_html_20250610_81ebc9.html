@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Matières - Lycée</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; }
+        #auth-container, #chat-container { padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        input, select, button { padding: 10px; width: 100%; margin-bottom: 10px; border-radius: 5px; border: 1px solid #ddd; }
+        button { background-color: #4285f4; color: white; border: none; cursor: pointer; }
+        #messages { height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 20px; }
+        .message { margin-bottom: 10px; padding: 8px; background: #f9f9f9; border-radius: 5px; }
+        .profile-img { width: 30px; height: 30px; border-radius: 50%; vertical-align: middle; }
+        .matiere-tabs { display: flex; margin-bottom: 20px; }
+        .matiere-tab { padding: 10px 15px; background: #e0e0e0; margin-right: 5px; cursor: pointer; }
+        .matiere-tab.active { background: #4285f4; color: white; }
+        #recaptcha-container { margin: 15px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Étape 1 : Authentification -->
+        <div id="auth-container">
+            <h2>Création de profil</h2>
+            <div class="form-group">
+                <input type="text" id="firstName" placeholder="Prénom" required>
+            </div>
+            <div class="form-group">
+                <input type="text" id="lastName" placeholder="Nom" required>
+            </div>
+            <div class="form-group">
+                <select id="status" required>
+                    <option value="">-- Statut --</option>
+                    <option value="élève">Élève</option>
+                    <option value="professeur">Professeur</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <select id="matiere" required>
+                    <option value="">-- Matière principale --</option>
+                    <option value="math">Mathématiques</option>
+                    <option value="physique">Physique</option>
+                    <option value="svt">SVT</option>
+                    <option value="arabe">Arabe</option>
+                    <option value="francais">Français</option>
+                    <option value="anglais">Anglais</option>
+                    <option value="tamazight">Tamazight</option>
+                    <option value="histoire">Histoire/Géo</option>
+                    <option value="islamique">Éducation Islamique</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <input type="file" id="profilePic" accept="image/*">
+            </div>
+            <div id="recaptcha-container"></div>
+            <button id="registerBtn">S'inscrire</button>
+        </div>
+
+        <!-- Étape 2 : Interface du chat -->
+        <div id="chat-container" style="display:none;">
+            <h2 id="welcome-message"></h2>
+            <div class="matiere-tabs" id="matiere-tabs"></div>
+            <div id="messages"></div>
+            <textarea id="messageInput" placeholder="Écrivez votre message..."></textarea>
+            <button id="sendBtn">Envoyer</button>
+        </div>
+    </div>
+
+    <!-- Firebase + ReCaptcha -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-database-compat.js"></script>
+    <script src="https://www.google.com/recaptcha/api.js"></script>
+    
+    <script>
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "VOTRE_CLE_API",
+            authDomain: "VOTRE_PROJET.firebaseapp.com",
+            databaseURL: "https://VOTRE_PROJET.firebaseio.com",
+            projectId: "VOTRE_PROJET",
+            storageBucket: "VOTRE_PROJET.appspot.com"
+        };
+        firebase.initializeApp(firebaseConfig);
+
+        // Références
+        const auth = firebase.auth();
+        const db = firebase.database();
+        let currentMatiere = 'math'; // Matière par défaut
+
+        // Initialiser ReCaptcha
+        window.recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+            size: 'normal',
+            callback: () => {
+                // Callback après vérification ReCaptcha
+                registerUser();
+            }
+        });
+
+        // Enregistrement
+        document.getElementById('registerBtn').addEventListener('click', () => {
+            window.recaptchaVerifier.render().then(() => {
+                window.recaptchaVerifier.verify();
+            });
+        });
+
+        async function registerUser() {
+            const firstName = document.getElementById('firstName').value;
+            const lastName = document.getElementById('lastName').value;
+            const status = document.getElementById('status').value;
+            const matiere = document.getElementById('matiere').value;
+            const file = document.getElementById('profilePic').files[0];
+
+            if (!firstName || !lastName || !status || !matiere) {
+                alert('Tous les champs sont obligatoires !');
+                return;
+            }
+
+            try {
+                // Création anonyme avec ReCaptcha
+                const userCredential = await auth.signInAnonymously();
+                const userId = userCredential.user.uid;
+
+                // Stockage du profil
+                const profileData = {
+                    firstName,
+                    lastName,
+                    status,
+                    matiere,
+                    lastLogin: new Date().toISOString()
+                };
+
+                // Gestion de la photo
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        profileData.photoUrl = e.target.result;
+                        saveProfile(userId, profileData);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    await saveProfile(userId, profileData);
+                }
+            } catch (error) {
+                console.error("Erreur:", error);
+                alert("Erreur d'inscription: " + error.message);
+            }
+        }
+
+        async function saveProfile(userId, profileData) {
+            await db.ref('users/' + userId).set(profileData);
+            document.getElementById('auth-container').style.display = 'none';
+            document.getElementById('chat-container').style.display = 'block';
+            initChat(userId, profileData);
+        }
+
+        // Chat
+        function initChat(userId, userProfile) {
+            document.getElementById('welcome-message').textContent = 
+                `Bienvenue ${userProfile.firstName} (${userProfile.matiere})`;
+
+            // Gestion des onglets matières
+            const matieres = ['math', 'physique', 'svt', 'arabe', 'francais', 'anglais', 'tamazight', 'histoire', 'islamique'];
+            const matiereTabs = document.getElementById('matiere-tabs');
+            
+            matieres.forEach(matiere => {
+                const tab = document.createElement('div');
+                tab.className = 'matiere-tab' + (matiere === currentMatiere ? ' active' : '');
+                tab.textContent = matiere;
+                tab.addEventListener('click', () => {
+                    currentMatiere = matiere;
+                    document.querySelectorAll('.matiere-tab').forEach(t => t.classList.remove('active'));
+                    tab.classList.add('active');
+                    loadMessages();
+                });
+                matiereTabs.appendChild(tab);
+            });
+
+            // Envoi de message
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
+            document.getElementById('messageInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') sendMessage();
+            });
+
+            function sendMessage() {
+                const text = document.getElementById('messageInput').value.trim();
+                if (text) {
+                    db.ref(`matieres/${currentMatiere}`).push({
+                        userId,
+                        firstName: userProfile.firstName,
+                        lastName: userProfile.lastName,
+                        photoUrl: userProfile.photoUrl || null,
+                        text,
+                        timestamp: new Date().getTime()
+                    });
+                    document.getElementById('messageInput').value = '';
+                }
+            }
+
+            // Chargement des messages
+            function loadMessages() {
+                const messagesDiv = document.getElementById('messages');
+                messagesDiv.innerHTML = '';
+                
+                db.ref(`matieres/${currentMatiere}`).on('child_added', (snapshot) => {
+                    const msg = snapshot.val();
+                    const messageElement = document.createElement('div');
+                    messageElement.className = 'message';
+                    
+                    let author = `${msg.firstName} ${msg.lastName}`;
+                    if (msg.photoUrl) {
+                        author = `<img src="${msg.photoUrl}" class="profile-img"> ${author}`;
+                    }
+
+                    messageElement.innerHTML = `
+                        <strong>${author}</strong>: ${msg.text}
+                        <div class="timestamp">${new Date(msg.timestamp).toLocaleTimeString()}</div>
+                    `;
+                    messagesDiv.appendChild(messageElement);
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                });
+            }
+
+            loadMessages();
+        }
+
+        // Vérification de la connexion
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                db.ref('users/' + user.uid).once('value', (snapshot) => {
+                    if (snapshot.exists()) {
+                        document.getElementById('auth-container').style.display = 'none';
+                        document.getElementById('chat-container').style.display = 'block';
+                        initChat(user.uid, snapshot.val());
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
